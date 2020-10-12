@@ -248,12 +248,13 @@ atom_uuid_free (AtomUUID * data)
 }
 
 static void
-atom_ftyp_init (AtomFTYP * ftyp, guint32 major, guint32 version, GList * brands)
+atom_brands_init (AtomFTYP * ftyp, guint32 fourcc, guint32 major,
+    guint32 version, GList * brands)
 {
   gint index;
   GList *it = NULL;
 
-  atom_header_set (&ftyp->header, FOURCC_ftyp, 16, 0);
+  atom_header_set (&ftyp->header, fourcc, 16, 0);
   ftyp->major_brand = major;
   ftyp->version = version;
 
@@ -266,6 +267,12 @@ atom_ftyp_init (AtomFTYP * ftyp, guint32 major, guint32 version, GList * brands)
   for (it = brands; it != NULL; it = g_list_next (it)) {
     ftyp->compatible_brands[index++] = GPOINTER_TO_UINT (it->data);
   }
+}
+
+static void
+atom_ftyp_init (AtomFTYP * ftyp, guint32 major, guint32 version, GList * brands)
+{
+  atom_brands_init (ftyp, FOURCC_ftyp, major, version, brands);
 }
 
 AtomFTYP *
@@ -285,6 +292,22 @@ atom_ftyp_free (AtomFTYP * ftyp)
   g_free (ftyp->compatible_brands);
   ftyp->compatible_brands = NULL;
   g_free (ftyp);
+}
+
+static void
+atom_styp_init (AtomFTYP * ftyp, guint32 major, guint32 version, GList * brands)
+{
+  atom_brands_init (ftyp, FOURCC_styp, major, version, brands);
+}
+
+AtomFTYP *
+atom_styp_new (AtomsContext * context, guint32 major, guint32 version,
+    GList * brands)
+{
+  AtomFTYP *ftyp = g_new0 (AtomFTYP, 1);
+
+  atom_styp_init (ftyp, major, version, brands);
+  return ftyp;
 }
 
 static void

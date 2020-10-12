@@ -358,6 +358,9 @@ G_BEGIN_DECLS
 
 /* MPEG DASH */
 #define FOURCC_tfdt     GST_MAKE_FOURCC('t','f','d','t')
+#define FOURCC_styp     GST_MAKE_FOURCC('s','t','y','p')
+#define FOURCC_dash     GST_MAKE_FOURCC('d','a','s','h')
+#define FOURCC_msdh     GST_MAKE_FOURCC('m','s','d','h')
 
 /* Xiph fourcc */
 #define FOURCC_XdxT     GST_MAKE_FOURCC('X','d','x','T')

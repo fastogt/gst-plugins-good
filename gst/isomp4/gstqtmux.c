@@ -354,6 +354,9 @@ enum
 #define DEFAULT_INTERLEAVE_TIME 250*GST_MSECOND
 #define DEFAULT_FORCE_CHUNKS (FALSE)
 #define DEFAULT_MAX_RAW_AUDIO_DRIFT 40 * GST_MSECOND
+#define GST_QT_MUX_IS_FRAGMENTED(x) (\
+    x->format == GST_QT_MUX_FORMAT_ISML || \
+    x->format == GST_QT_MUX_FORMAT_DASH)
 #define DEFAULT_START_GAP_THRESHOLD 0
 #define DEFAULT_FORCE_CREATE_TIMECODE_TRAK FALSE
 #define DEFAULT_FRAGMENT_MODE GST_QT_MUX_FRAGMENT_DASH_OR_MSS
@@ -525,7 +528,7 @@ gst_qt_mux_class_init (GstQTMuxClass * klass)
   g_object_class_install_property (gobject_class, PROP_FRAGMENT_DURATION,
       g_param_spec_uint ("fragment-duration", "Fragment duration",
           "Fragment durations in ms (produce a fragmented file if > 0)",
-          0, G_MAXUINT32, klass->format == GST_QT_MUX_FORMAT_ISML ?
+          0, G_MAXUINT32, GST_QT_MUX_IS_FRAGMENTED (klass) ?
           2000 : DEFAULT_FRAGMENT_DURATION,
           G_PARAM_READWRITE | G_PARAM_CONSTRUCT | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_RESERVED_MAX_DURATION,
@@ -2155,6 +2158,39 @@ gst_qt_mux_prepare_and_send_ftyp (GstQTMux * qtmux)
   return gst_qt_mux_send_ftyp (qtmux, &qtmux->header_size);
 }
 
+static GstFlowReturn
+gst_qt_mux_prepare_and_send_styp (GstQTMux * qtmux, guint32 major,
+    GList * brands)
+{
+  AtomFTYP *styp = NULL;
+  GstBuffer *buf;
+  guint64 size = 0, offset = 0, off = 0;
+  guint8 *data = NULL;
+
+  GST_DEBUG_OBJECT (qtmux, "Preparing to send styp atom");
+
+  styp = atom_styp_new (qtmux->context, major, 0, brands);
+
+  GST_DEBUG_OBJECT (qtmux, "Sending styp atom");
+
+  if (!atom_ftyp_copy_data (styp, &data, &size, &offset))
+    goto serialize_error;
+
+  buf = _gst_buffer_new_take_data (data, offset);
+
+  GST_LOG_OBJECT (qtmux, "Pushing styp");
+  return gst_qt_mux_send_buffer (qtmux, buf, &off, FALSE);
+
+  /* ERRORS */
+serialize_error:
+  {
+    GST_ELEMENT_ERROR (qtmux, STREAM, MUX, (NULL),
+        ("Failed to serialize styp"));
+    return GST_FLOW_ERROR;
+  }
+  return gst_qt_mux_send_ftyp (qtmux, NULL);
+}
+
 static void
 gst_qt_mux_set_header_on_caps (GstQTMux * mux, GstBuffer * buf)
 {
@@ -3009,8 +3045,7 @@ gst_qt_mux_start_file (GstQTMux * qtmux)
 
   /* Require a sensible fragment duration when muxing
    * using the ISML muxer */
-  if (qtmux_klass->format == GST_QT_MUX_FORMAT_ISML &&
-      qtmux->fragment_duration == 0)
+  if (GST_QT_MUX_IS_FRAGMENTED (qtmux_klass) && qtmux->fragment_duration == 0)
     goto invalid_isml;
 
   if (qtmux->fragment_duration > 0) {
@@ -4154,6 +4189,7 @@ gst_qt_mux_pad_fragment_add_buffer (GstQTMux * qtmux, GstQTMuxPad * pad,
     gint64 pts_offset)
 {
   GstFlowReturn ret = GST_FLOW_OK;
+  GstQTMuxClass *qtmux_klass = (GstQTMuxClass *) (G_OBJECT_GET_CLASS (qtmux));
   guint index = 0;
 
   GST_LOG_OBJECT (pad, "%p %u %" G_GUINT64_FORMAT " %" G_GUINT64_FORMAT,
@@ -4262,6 +4298,11 @@ flush:
         moof_size = gst_buffer_get_size (moof_buffer);
 
         atom_moof_free (moof);
+	if (qtmux_klass->format == GST_QT_MUX_FORMAT_DASH) {
+          GList *brands = NULL;
+          gst_qt_mux_prepare_and_send_styp (qtmux, FOURCC_msdh, brands);
+        }
+
         /* now we know where moof ends up, update offset in tfra */
         if (pad->tfra)
           atom_tfra_update_offset (pad->tfra, qtmux->header_size);
@@ -7131,9 +7172,8 @@ gst_qt_mux_subclass_set_property (GObject * object,
     case PROP_SUBCLASS_STREAMABLE:{
       GstQTMuxClass *qtmux_klass =
           (GstQTMuxClass *) (G_OBJECT_GET_CLASS (qtmux));
-      if (qtmux_klass->format == GST_QT_MUX_FORMAT_ISML) {
+      if (GST_QT_MUX_IS_FRAGMENTED (qtmux_klass))
         qtmux->streamable = g_value_get_boolean (value);
-      }
       break;
     }
     default:
@@ -7151,9 +7191,12 @@ gst_qt_mux_subclass_get_property (GObject * object,
 
   GST_OBJECT_LOCK (qtmux);
   switch (prop_id) {
-    case PROP_SUBCLASS_STREAMABLE:
-      g_value_set_boolean (value, qtmux->streamable);
+    case PROP_SUBCLASS_STREAMABLE:{
+      GstQTMuxClass *qtmux_klass = (GstQTMuxClass *) (G_OBJECT_GET_CLASS (qtmux));
+      if (GST_QT_MUX_IS_FRAGMENTED (qtmux_klass))
+        g_value_set_boolean (value, qtmux->streamable);
       break;
+    }
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -7175,7 +7218,7 @@ gst_qt_mux_subclass_class_init (GstQTMuxClass * klass)
   gobject_class->get_property = gst_qt_mux_subclass_get_property;
 
   streamable_flags = G_PARAM_READWRITE | G_PARAM_CONSTRUCT;
-  if (klass->format == GST_QT_MUX_FORMAT_ISML) {
+  if (GST_QT_MUX_IS_FRAGMENTED (klass)) {
     streamable_desc = STREAMABLE_DESC;
     streamable = DEFAULT_STREAMABLE;
   } else {

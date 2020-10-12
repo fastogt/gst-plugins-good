@@ -937,6 +937,9 @@ guint64    atom_ftyp_copy_data         (AtomFTYP *ftyp, guint8 **buffer,
                                         guint64 *size, guint64 *offset);
 void       atom_ftyp_free              (AtomFTYP *ftyp);
 
+AtomFTYP*  atom_styp_new               (AtomsContext *context, guint32 major,
+                                        guint32 version, GList *brands);
+
 AtomTRAK*  atom_trak_new               (AtomsContext *context);
 void       atom_trak_add_samples       (AtomTRAK * trak, guint32 nsamples, guint32 delta,
                                         guint32 size, guint64 chunk_offset, gboolean sync,
